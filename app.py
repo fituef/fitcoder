@@ -5,17 +5,20 @@ IUHCoder - Kết quả tốt nhất theo bài.  Chỉ cần dán link submission
 Chạy:   python iuhcoder_best_app.py
 Mở:     http://localhost:8000   (tự mở trình duyệt)
 Yêu cầu: Python 3.8+, không cần cài thêm thư viện.
+Mật khẩu vào trang: mặc định FIT2026, đổi bằng biến môi trường APP_PASSWORD.
 Triển khai server: đặt biến môi trường HOST=0.0.0.0 và PORT (xem README.md).
 
 Chương trình chỉ chạy trên máy bạn (127.0.0.1) và chỉ tải các trang
 https://oj.iuhcoder.com/submissions/... và /user/... , mỗi trang cách nhau ~1 giây.
 """
-import os, sys, threading, time, webbrowser
+import os, sys, threading, time, webbrowser, hmac, hashlib
 import urllib.request, urllib.error, urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 HOST = os.environ.get("HOST", "127.0.0.1")   # đặt HOST=0.0.0.0 khi triển khai lên server
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT", 8000))
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "FIT2026")   # đổi mật khẩu bằng biến môi trường APP_PASSWORD
+SESSION_TTL = 12 * 3600
 _throttle = threading.Lock()
 _last_fetch = [0.0]
 ALLOWED_HOST = "oj.iuhcoder.com"
@@ -24,7 +27,9 @@ PAGE = r"""<!DOCTYPE html>
 <html lang="vi"><head><meta charset="utf-8">
 <meta name="theme-color" content="#0B509F">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kết quả tốt nhất theo bài – UEF</title>
+<title>KẾT QUẢ FIT CODE CONTEST - UEF</title>
+<link rel="icon" type="image/png" href="__FAVICON__">
+<link rel="apple-touch-icon" href="__FAVICON__">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 :root{color-scheme:light;--blue:#0B509F;--blue-d:#083B75;--red:#E31B23;--red-d:#C0141B;--ink:#14233A;--mut:#5B6B80;--line:#D5DDE8;--bg:#EDF1F6;--paper:#fff;--ok:#13794A;--okb:#DFF2E7;--pt:#A15C07;--ptb:#FCEBD0}
@@ -449,10 +454,105 @@ def build_xlsx(users):
             z.writestr(f"xl/worksheets/sheet{i}.xml", _sheet_xml(rws))
     return buf.getvalue()
 
+FAVICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAbcklEQVR42u2deZxdZZnnv+97zrnnrlWpqtSWSlGBJBAgCSELgqAk7EiDTDfYamM7SEuYsXVsW7vbbVptHXuclml7HMVxmG4XUGlZFHuQpUEkCdAIRCQLZKnsSe3L3e855337j3PurVtbUpUFUuT8Pp9DqKpznvPe9/m9z/YuF0KECBEiRIgQIUKECBEiRIgQIUKECBEiRIgQIUKECBEiRIgQIUKECBEiRIgQIUKECBEiRIgQIUKECDHzIKp/0FobgJzJH+jFyn8mwQpYcWrrXAkhvJD6IUYsgNbaEEJ4WuubgLcD6mSyBEqNNEgeoVWucslmXRzHo6QUuIAJESmxbYNELII8gpDpvG8mjfzgI20QQvy0rHMz+KMEPODdwC0nW8ulHM/G/izs6y2yvyfN9q40vQNFCpkS/bkiw3mHvONSUhqtNEIKLClIRS1qbP+KJiO0NMVZ1JqiuSFJa32E+vjk73sLoRH4aVnn5pg/DgEOlXHzxo90DRhVva88xa4DQ2zaNcDmPYNs2tPPtgPD7O/L0zVQoOQ6oDR42jdohgDDCDQofBuny5cGz/PvFfj3SoltGTTVxWhviLOovYal8xo4t30W55xez5ym1Kg2ekohkDPRMpR1OlT9y7FKNgArcA1vCAG0Bo1GClHpVK0Umzv7efT5Pfxy40F2dafpShfJFl2Uxh/RpsRKWNjSwhAChBgRiK9wXf6fsV4vIIXWGk9rlIaD6SJ7B/Js2N6LITqpiVq01EY5s62W61a0sXp5Gwvb6zCCRurgXUKImeTuzUDHkxLgDYMOFCClQATJyO6DQzz98j4eenYvz27t5tBAHmwDpMSQAmFIzOC5kuPhOB6jdCwEKiCABJACIQjIJTCkQAqQYuT9IugR0zIQEaNiKApKs603y5YDw/xs3S7aZse5/LxWrlw5l0vPa6O9JQVCoPUI92YizDdV8UKQLzg8++oh7lvXyVO/PcC2Q2l0wQPbwE5EsEzJ7KRNypYkkzZzUlFqohZWxCCVtIhaBoavexwtyOQd0jkHXfLozhXpThfJZEoMFlz6syUc10NrME0DOyJ96wEorVGqyhRKMKVPCmoEvUWX7/+6kx+s38WiOTWsWdzKR999DotOb0CPzadDAkygeALFC1/x2VyJnz+7m3t+tYMnNh6gOFQA0yBZY7NsUSNnzZ3F4vZZtDcnOaO1hrqkTSoeoSZuYVnGEYedVpp80SWdK5LJOhwcyNPZNczOQ2le3tHH1t2D7OjK4moFhsSOGESMsnnXFdeEBpTGMg3sWgOlYFtPhi2/2MxTGw/w489dxtIFjb41mYGm4A0hgKpSvFaKX6zfxZfveZl/294LQjCvJcWy5W1cubSFS85rY15LipqkPSVSTebihRTEYxbxmEVzA8w/rY5LmOMHcq5H92Ce1/YM8vPndrN+aze7u9L0ZByQYFsmluG7k0pIoTVe4HFilok522LL/iH+/oFXuftTq313MAMtgXmiR71SGkP63fKvL+7j7/75t/xywx6aWpL8x6vO5IrzWrnk3GY65taNcxW+AnSVbsWkPSyqXqort4lgPFfHCWCYBq2zk7TOTrJ6+Vxy2SKbOvt5YuMBHt+4n5d3DDCYLWFZBtGIAUFbqgntemDETF7tHGA4U6I2ZftkESEBKiNGCD/wem3PAF/5wcs88tJeFrTN4s7/cjHXrpzLoo66So8ppfGUDvxvELQJcUw9qpSujErfOvvMKJt3HWSD8YTNqsWtrFrcykduPJd1v+viwed38+TGA+w8lMa0DeK2iVYjRJDCdzN2xMA0Z24UaJ5Ik6+05tsP/o7/ft8rLO2Yxfc++U7WLJtLLGYF9/lEKStcypGOLJVcCkWP3uE8PYN5MtkSruNRKHk4nqpYmJhlELVNIrZBKmHTXBdnViJCLGpOWPErK19A5X3lwBQBNcko77qog3dd1MGWXX08sK6Tf3p8O9sPpYnELCKBsh2lUTmH61a2kYhFZmw2YB7fUU8l7XptzwDfuG8j2w5kuPM/v50/eMfplSCpPCplMDQzuRJd/Tm27htkx54hdu4fYvOBIQaHCvQWHIYLHk7JQ3nKz9ur8nAjeJ9hSCK2SX3Moi5uMa85yZLT6mlrSXHW3Bo6WlI01cUxTaOSdpathBBiHBmEFJw9r4HPzmvgj9Ys5H//bBM/2bCLrqECSIGh4X2rz2DtDee+JeYCLCGEo7X+NnDH0VQCy8rXWvPouk5+8cJeVpzVxC1XnelH7dUWwvHYsneQl3f28uLWHl7e2c/WvUN0DeQgWwIh/fw/qNRhBPVZQ2AKgSH9Spyf1wu01hUX4iqN6ylwFZQUmIL6ZIQ5sxMsmVfPijPqOW9+A+fOa6C1MTGu/WMtmdZUYphXXu9hw6sHGS44nN1ex1UXtGPb1kyrBN4lhPhPZZ0fFwKUO284W+ThdZ24JY9r3j6P5oaqDkazcXsPD//a962dPWl6M0WEIWlK2jQkIiSTNjUJk6hlIMuBoNJkii75kodTdOjJu/RlShQKLjnXQ7sKTIkdMbEMiWmIiokpB6ElV+G4CuUqpBQ0JCzmN6c4d1491y5v45q3nUYiPrkZV0F0J8Xkn/2UJUDZnPcP5/nNpoPMaUyxeEFj5e9dvVme2bifn/26k5d29NPaGGNhRz3LzqjjjOYUdXUxWuvi1MQi2LaJFH4KJ0aC+KBIo8nlXfoyBXoH8wwOF9l+aJht+4bYsmeQ3+0epDfn4Lge0jQwTYlliMroLStKaXCVTwjPUUhPc8OqNr71Z++kdXbysAotB4ACEcQRYib5/RNnAfIllwNdaRrr49QkbFxPcbAnw3Obu9i6ow/P1czvqOOixS2c1poiMsYlHCsKBYcDPVn+7fUeXnytl42dvWw5mKZ7qIDjKWzbJGJJCKJ4IagoTwGZ/hx/+Z7z+Nu1F83oqt7REOC4BIGmFMxv9/P4TK7E/p40Pf1Z5jWnWLOindm10UmfLTkurqtwPX/qVgfBoW0b2JY1qTY8pSupZjRqcUb7LM5on8V7L1/IULrItv2DbNjcxVO/PcC6Td30DhYwoyaxiDkymgP/bsQi/Oa1XnL5EvEZHNG/aVmAZRoVM2sakrlNNZzV0eAr2PXY151m16E0e3tz7Ds0xLaDafb15cnnXPKeh6s1Co0hfLNtmZKobZAwDUzbpLk2yqLmFB1NKVoaE8yfk6SuNkb1rL0GPE8BgtqUzcpFzaxc1Mzt153D73b28fC6Tu57dhevHcxgmJKYbfjZgxR4jkfjrOhxt0ynXBooBETtEZE9gzn2dw/T3Z9jb2+OriE/l2+qjxOLmjhFj3S2yIHhIrt7c2TTRboLDirvjkzrGhKkQAKmp4mlIpzZkmR+Wy0rFzRwdkc9586ro3V2cpQCPeXn+lHbZNXZzaw6u5m17z6XHz+9g3ue3MHv9gzgagGeYnaNzR2/twjTNGZsTf9NTwMnM9NKqSBtK0/CM6F9HcoU6e7L8tqBNPu707y6d5DN+4fZ15Ph0ECe4YKLMAS2aeC6Hq6jQGsScYuO+jiL5tbytjMbuXhxK+fNbyCZiIwq/FRH8V19Ge5/eidPbOomGTP5wJr5XLmi/a1u+k9cEDgV+NYgzZ5Dw/T2ZdnfVyJZa7NkXh1ntNVwRmvtuN4fzBTZ15Nhc2c/z23tYt0rh9i0Z4icVkSjFhHLQClNoeThOh4CaKqxWdJRx1Ur5rL2+nOoqUrvtC7HGEE1z1WYRjBJ9dYN/k4OApRz8my+RM9Ajm27h3jo2V08v+kQ/QWHpto4q5e0cOnyuZy/oIG2xuQ4GX0DOV7a1sv3Ht/Ghi1d7BrKgxYkYiaWFLjVOX/B5TPvW8ZXbl0VFH6rFw2NJkK5dE1IgBNHgOrSa+9glpKjqEnaaKV5/IW9fP/J7Tz54gGywwUWnTmbK1a0sWZJK287u4m2MevyAHbsHeAXz+/hgQ27+c22XnKuIh63sAzf3WTzDm+bV8+/fPkaUil7Qt9enr07RTz+yUOAXN5h864+frOpi1lxmxuvWEA8avH85oP88LFt3PNMJwO9WeL1cZa313Lpkjnc+M7TWXlWU0VGuXY/MJznl8/t5d5fbeepVw+RdRTRmElhqMjN7zydH/7VGizbglMotTupCVCN/qEC//zoa9z/zE5uvuYsPnzdOQC8tK2Hux/Zwt2PbqPoeMiIQWtNjN+/cC63v+vsSqWxmgiFgsOjL+zlO49s4YXtfSzvqON/rL2IpQtmn3KR/clLgKowuzroevKFvXz0G+tYNr+B/3bHhXS01gDw8PpOvnLvRl7c0w+GxHU82mqjrL3yTG6/YTHNDfGq+XlfWq7gsLc7w9zGBIlYhBBvJgH8uVXGRGD+JWV5uR2GFGzbPcD7vvQ4Q47Hdz5+CZctbwegdyDHP9z/Ct9+5DWGHQ8rYpAdKvJ7q9q593OXkwqi/HJwV72mIBz5RybAidveoFSwOED6V3ntvpT+xg0hKnszlNIs7Kjj/r+5mogpuemLT/Dgk9sBmF0X50t/ciF3f+wdtNbEyOYd7Bqbxzfu50B3tkrR/gKPkaVkhMp/oyuBo0a+lOhikdK69bjr1uN17gTXRc5uwrzwAiLvfAdyjr9IU+LP5XfMqeUnn72cKz71L9z6P58hlbC44m0deEpzw6VncNa8Oj7+rfWs33iI9645nXlzfFchqkZ9eaInxLT0pa3g329rH44+Wnie1lrr0q9+pQf/w826t22B7qlp0j2Jev9KNeqe+hbdv+pinf3mXVoVCv5zSmnXU1prrb//yGZtXvNdffot9+hNO3r8Brm+3OFMUb/yerfO5Us6xLRQ1um3q3Uuj7vZl5LCj35C+o9vw3nyGT/PrqtDNDb5V30DIpHC27WP/Gf/K9lPfRpdKlUsgdKamy9byHUXzKVz/zCf+NZzFIsuhiFRSpNKRFiysJFY1ApH7nGAPN7Kd556iuynP48ueohZs3yb7Hnguv7l+RM9ImZD7SwKd3+f7Be+RMVwa4hGTD64egGxRIR/3d7D9x7bWlkgUu3jQ5wsBCj7/GyW3Ne+DkNpiEUryp6UMFoj6usp3PV/KT35JEiJ0AqtYc2KuZx/2izcnhwH+/KjfLy/ySRU3skTBCoFhoGz7lnclzdBKuWP9qkQxzAAQeGee7HWrEYES7ln1UT5+tqLeP6Vg9x89VkAYWj3RhBAKb9EM6URVq6jl2fXnnsenc8j7AhTttFKQcTG3bId3dODaG4GrdBacuHSVi5c2lrhCogpiZ2ydThaYdN97lj91fGQVX5uzF6JcQSQUkxfcCDU27IJxPSL7kJKSKfxDnUjm5v9ur08SqUebceeyOeOZ+OPc5tNgBdf9I/V2rSzh5+/2MeW7fuIRsxJySalIJNzePfFHbxnzcJgV42AUuHoGCoEFEtQKPglYinZvneIr977EsKYXlbveorbrj6LS5a1TVwJDNqq+vvJ3fkN9KEeGGuxhEDnclgXrCC29sM+wcvP9faS+9qd6KFhMI3Rm1ODOMhceT6xO9YiDInXuYv8N+9CZ7P+6qapdo8AXIWIR4n9+ccx5rZR2rCBwv/5f4hEcnr9LAQqm6X2HRejbrze/12gc58AwX1dfTnueWoXm7Z0Qjzi12knIoBpoPqyNNTYFQJIIRB1jUcXV2oN0ShyVk1ljmB/V4Z/fGwbOjJNea7H5UtaAgJMPmB0NkvpoYdQ23ZDIsHowwEM9MAAupD3CVBFHJ3JUvzpg+hD3WDboxVhmOj+HvTwILE7PuwntgP9FO9/EN03AKY5dcUJAY4D8Rj2rR/EmNuGen07xe99D1HXDGoaJ71JiRroh/Qg6urLJ3cBhpQkExZGMkIqFhm1I3bUfaZkqGQzNFzwR1lwn7lqFcX7H542O7XjYjQ3INraKr/e35/BTlhEbGPKA0bhb/22TMkRo0YhEIkkom4WxOPjCAAaEU9M/Fwq5VusyBjLYZqgXEQ8NqrzRU0qmPQwpkcA14WIRWUtm2khErMQdbVU9qpPkQBCK5/oYzplwiDQC67JCKAdhbQN1m/vo2cgR1Od31HWJRcjmxvR6fTU2S4llApELr8UmUyiPf/Ahue391JwXCK2Udk1PBUCKDWNGoFSwaFR3mgCwMS/m+i5Ma5jwufK908niKvIMkZbyvJ7p0OA8nMTfJ6jqgMorYlGTHZ2ZXji5f0gQCmFee4i7BuuQQ8PBaPoCLBMSKcxFi4g+qHb/FhCCvqG8jy/tRtpGmHB52QrBAn86VvLEEhT8tCG3Xiu8jdpCkHsU3+OdeUadFe3HyQFM38VZyyCU5osyw+kIgaJv/sqsrnJP9NPCJ5+eT+v7B4kbpuTWqHqgNQYc824IpEIjrab7JrO5ynPtk50TbBd3pyu8l2lKeScwLTA/es7ue/J13nfVYvQSiObmkh99y4yf/oxSj///5BIIWx7hABKg+uis/3I004j+b/uJLL6UpSnkIZkf3eaT9z1PPl0CbvWxpLisIFzJuf4bkMEu0Fdl5KjKu076atHga/XmfToiLUcA0Sj/k7nqSKXQxeLoz+3lOjBAchkxrkgczrtLLmatvoYVy1uwQiYmS+49A+VcFyFZUq0UsjZs0nd+0MK//hPFH/wI1TnbnTRBe2BKZDNzUSufi/Rj34Eo30uKFWZ0t28o59LFrdww6woz2zuYvOBIWxTTpiQuBquX9nOvMYkJdfz9/p5ioWn1Z242sFxtb8CCiVEWwv2FTdBoTjaUioP7ARGQ8PUagCuh7l0Mcayc0dXYqVA5XJw8cXIePzoCCCFoOS4LGhJcdefvWN8paa6qKM1Qkpit32I6Htuwtu+A2//ISgWkY31GAsWVNYClCeRyh/tyos6uPKiDgD+4q71bNzVT9QaHT2Xd/kqrfn0Hy7lwnNaJiHtSc4AIdGFPOb8+SS/9rVjKwIJgS6ViPz+jcQ+svbIPn/FiqObC3CVJp11Ru2n9y8xrqHa89CpGuT552OcXxWU4o9UKcU4v1Q+EwABjnvkCDBXdIMdSCOHUYmZNFlUzvddD7Sa5HRqMfr83MORoFgaifirZZUrtkcqBU81CCwvv5q00KI0wjAmdMHCLzr4q3rF+P6QQSA3FSWWN3geVRn7ZCKBaYASExNAqenJKgfeUzjQ+LgvCSvvstm6d5DvPLyJy5bOoWNODbGohSEFhaJL32CBDa8e4LSmJO+/elGYi72JOO4EKO+2GSo4fOPBTdz92DYiEQPTtrBMQSnv4DqKgXSBv7x5Ce+HU2o//lueAJVqqhDIuAURg5xS6GyxcviDaUjMuHVK7sef8QQob/L0lB6/3UqMv0/gnyBSOb8f3+8rNfoU0FMa5VLtRP0hxPGRVQ4ChTg2AphSkIxVTVCMgTfmxeXj10d+mvqM6CmjfNM8fOl8OkGgHZmWrCkTQGlNxDLY2ZXmM999FtMwRh+b6iqSiQh/cuMSGmqi5RN6Qxy2UxUiFsPb2Un2r//GTwcrhSCJ9krIliZit9+OiMUOP5GkQVgWzqOPke3thqIzUh2VElXIkLr2WtSay/z7q9cDTJWoEVOwty/PVx/YTOWg3fJ3vAwV+IsPrqA2YQfeIIzqptapEfSBg+T/9usjCiOYOs6niX/5i77yj+gONFgm7jPP4jz6hF+oK5v9koOOWaRuuWUkMzyaQlCZBNFZdkX3piEZTBd591UL+fJtF0ypXhFiPAlE25yq4oaEbAbzkouIffITU0+TtIaalL/GoUqW7usj/sXPwbLzxi3WNY+mvZ43YvozJYc5iQhfuGU5lmUEcwLh6J92pzrO6MBJSqJ/eoc/kea6fpwwRbeC8oLRaUJfL5ErVhP78K2BCxk9Qo9qvFaqdELgOIpP/uF5LF3Y6BeBZKh8jqVTDQNdKGBdeQX2u64+uiKJCKaEi0VEWxvxv/4cMhYPKo7HSAANwQodQTpT4uqlLdx29VlBSBAq/+gsACP1+1IJEYsRu/1WMK3pE6Bq1ZAuFol++EOYS5eiJllBNG0CGEIQMf0M4LS6GF/4o+UkE7Z/dm6o/6ODFL6yrQi6VMT+g+ux3n7R+AmdKSnIANtGFwtELruE2G0fPGz2MK3p4GzRZdWCBr76geUgBLNroiyZP3vUiVshpqP4YBn58mUkvvJFf5Os8uf0p10EEgIKRSJ//H6i770Jnc1iLJiPqKnxi2+T1AamtSBEKU0qZrH6vDZE+Ru2TmQdX7/Fq0bBVLBIpbBWrTjmKqBWCmPePKyVK0a7hMPImbYL8JQmm3cq5eATOvCP7SuDZg4JlPIv161smj1qlEojsqYwOo9qPYCsWg8Q4vi5g1H/HguhyjKmMDrDss2pzruTPj0KrcwpTIBTIQYICTDTijY6JMBbJvo+YpA0wdbyCRZVTPzYzDBd5ug+EeWjPXX5qxYmcsrllTwTZRk6WBSoy2ImdeQjp4iOlVP5eQoyRtoyxW1AZeGWBXYEXT7QcqxcaaAOHkQV8shoLNipG0Fls+hSCT1JtK61gmgMYRiVdh0ulCl/q3qlFHwYC1OWxZFkTWypJuxIc0whwRTSFCAshDn6XiFAaIQ0sSxr0ozFDApEpmWBMBknp0qWDGa4xsqpZESGOSJD6PEDU2hM0xr13qmmW0Z9PXZzM6VXtwZzGFUkUBqSSfSLL6HufwD5gQ/4W8EB9cMfYfb1+1vKx5FOoDxNdM7cym8s08QSIvjOgvFr4HVwT2X/3mFgmSYW5T0YYpzZ0YBVljFeljWRzs0xDcpozxsC5WnlGdVr9jQCtIdSHq7rEolEJixVu57CNCSu44D20EqOW/unRSArmKAYK6f8s+d5gQwPrUYTQAcHDXueO+q9U4JS/lTpsmW4Tzw9fuSVV68aJkOf+TzxwSHM5csp/vgnFO65D+LJ4JkxZt9xEKk4+sJVI/2hPByt/D6oPju58kENGBjE2bAeSs74zRymhbF0KTKVxHVdHEAoPaGl0GhcpYiAb1FGk8DD/w7WzDgCrF250gGYHW3/q6Lc8nmk1om0EF1VLGsG0gxguhGGh/uJx1vo7oaWMbuyenu6aWlpYaigwBkg6zSPY2szkGGA/MAwwDg55Z+NQg7cQeLDzXRNYt5Lohdoq7x3Suju5hDA9Svgm0ApCnSNaWEXLF1K1+OPw8c+OuovtC+Frq4xQoNnWpqx33XtSH8gwFCgsqCaR7/HBSLNuJteYvfFl0za3OZHH6XlqqsY1C4UIlC0x7Q3eL85zLBXIA7Q0zNWOWVz5QTu3gkj+ukGi/KtFzNPdAbaEb9EZarLuY+8OfPwp3mIKUTTx7S0/ERNZGh9fN8z9sj9Y0hV/UA/RIgQIUKECBEiRIgQIUKECBEiRIgQIUKECBEiRIgQIUKECBEiRIgQIUKECBEiRIgQIUKECBEiRIgQMxv/DuyJwhuqoGZxAAAAAElFTkSuQmCC"
+PAGE = PAGE.replace("__FAVICON__", FAVICON)
+_LOGO = re.search(r'<img class="logo"[^>]*src="([^"]+)"', PAGE).group(1)
+
+LOGIN_PAGE = r"""<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0B509F">
+<title>KẾT QUẢ FIT CODE CONTEST - UEF</title>
+<link rel="icon" type="image/png" href="__FAVICON__">
+<link rel="apple-touch-icon" href="__FAVICON__">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:light;--blue:#0B509F;--blue-d:#083B75;--red:#E31B23;--red-d:#C0141B;--ink:#14233A;--mut:#5B6B80;--line:#D5DDE8;--bg:#EDF1F6;--pt:#A15C07}
+*{box-sizing:border-box}
+body{margin:0;display:flex;flex-direction:column;min-height:100vh;background:var(--bg);color:var(--ink);font:400 15px/1.55 "Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.top{background:#fff;padding:12px 24px;border-bottom:1px solid var(--line)}
+.top .in{max-width:1120px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.logo{display:block;height:88px;max-width:100%;width:auto;margin-left:-8px}
+.event{font-weight:700;font-size:24px;line-height:1.2;letter-spacing:.02em;color:var(--blue);text-align:right}
+.band{background:var(--blue);height:12px;border-bottom:4px solid var(--red)}
+main{flex:1;width:100%;display:flex;align-items:flex-start;justify-content:center;padding:48px 18px}
+form{width:100%;max-width:420px;background:#fff;border:1px solid var(--line);border-left:4px solid var(--blue);padding:24px}
+h1{margin:0 0 4px;font-size:20px;line-height:1.3}
+p{margin:0 0 16px;color:var(--mut);font-size:14px}
+label{display:block;font-weight:600;font-size:14px;margin-bottom:6px}
+input{width:100%;border:1px solid var(--line);border-radius:4px;padding:10px 12px;font:inherit;color:var(--ink)}
+button{margin-top:14px;width:100%;font:600 15px "Be Vietnam Pro",system-ui,sans-serif;border:1px solid var(--red);background:var(--red);color:#fff;padding:10px 16px;border-radius:4px;cursor:pointer}
+button:hover{background:var(--red-d)}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.err{color:var(--pt);font-size:13px;margin:10px 0 0;min-height:1.3em}
+.foot{background:var(--blue-d);color:#C9DAF0;padding:18px 24px;font-size:13px;border-top:4px solid var(--red)}
+.foot .fin{max-width:1120px;margin:0 auto}.foot b{color:#fff;font-weight:600}
+@media (max-width:640px){.event{font-size:14px;max-width:11ch}.logo{height:46px}.top,.foot{padding-left:14px;padding-right:14px}}
+</style></head><body>
+<header class="top"><div class="in"><img class="logo" alt="UEF – Đại học Kinh tế Tài chính TP.HCM và Khoa Công nghệ thông tin (FIT UEF)" src="__LOGO__"><div class="event">FIT CODE CONTEST 2026</div></div></header>
+<div class="band"></div>
+<main>
+<form method="post" action="/login" autocomplete="off">
+  <h1>Nhập mật khẩu để tiếp tục</h1>
+  <p>Trang này chỉ dành cho ban tổ chức FIT CODE CONTEST.</p>
+  <label for="pw">Mật khẩu</label>
+  <input id="pw" name="password" type="password" autofocus required>
+  <p class="err" role="alert">__ERR__</p>
+  <button type="submit">Vào trang</button>
+</form>
+</main>
+<footer class="foot"><div class="fin">Phát triển bởi <b>ThS. Hoàng Văn Hiếu</b> – Trưởng ngành Công nghệ thông tin UEF.</div></footer>
+</body></html>
+""".replace("__FAVICON__", FAVICON).replace("__LOGO__", _LOGO)
+
+_KEY = hashlib.sha256(("iuhcoder-best|" + APP_PASSWORD).encode()).digest()
+
+def _sign(ts):
+    return hmac.new(_KEY, str(ts).encode(), hashlib.sha256).hexdigest()
+
+def make_token():
+    ts = int(time.time())
+    return f"{ts}.{_sign(ts)}"
+
+def valid_token(tok):
+    try:
+        ts, sig = tok.split(".")
+        ts = int(ts)
+    except Exception:
+        return False
+    return hmac.compare_digest(sig, _sign(ts)) and 0 <= time.time() - ts < SESSION_TTL
+
 class H(BaseHTTPRequestHandler):
+    def _authed(self):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "fc_auth":
+                return valid_token(v)
+        return False
     def do_POST(self):
+        if self.path == "/login":
+            try:
+                n = min(int(self.headers.get("Content-Length", 0)), 4096)
+                form = urllib.parse.parse_qs(self.rfile.read(n).decode("utf-8"))
+                pw = form.get("password", [""])[0]
+            except Exception:
+                pw = ""
+            if hmac.compare_digest(pw.encode("utf-8"), APP_PASSWORD.encode("utf-8")):
+                cookie = f"fc_auth={make_token()}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_TTL}"
+                if self.headers.get("X-Forwarded-Proto") == "https":
+                    cookie += "; Secure"
+                self.send_response(303)
+                self.send_header("Location", "/")
+                self.send_header("Set-Cookie", cookie)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            time.sleep(1)   # làm chậm việc dò mật khẩu
+            return self._send(401, LOGIN_PAGE.replace("__ERR__", "Mật khẩu không đúng. Hãy thử lại."), "text/html; charset=utf-8")
         if self.path != "/xlsx":
             return self._send(404, "Not found")
+        if not self._authed():
+            return self._send(401, "Phiên đăng nhập đã hết hạn. Hãy tải lại trang và nhập mật khẩu.")
         try:
             n = int(self.headers.get("Content-Length", 0))
             if n > 20_000_000:
@@ -467,10 +567,13 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _send(self, code, body, ctype="text/plain; charset=utf-8"):
+    def _send(self, code, body, ctype="text/plain; charset=utf-8", headers=None):
         b = body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.send_header("Content-Length", str(len(b)))
         self.end_headers()
         self.wfile.write(b)
@@ -478,8 +581,12 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
         if u.path == "/":
-            return self._send(200, PAGE, "text/html; charset=utf-8")
+            if self._authed():
+                return self._send(200, PAGE, "text/html; charset=utf-8")
+            return self._send(200, LOGIN_PAGE.replace("__ERR__", ""), "text/html; charset=utf-8")
         if u.path == "/fetch":
+            if not self._authed():
+                return self._send(401, "Phiên đăng nhập đã hết hạn. Hãy tải lại trang và nhập mật khẩu.")
             target = urllib.parse.parse_qs(u.query).get("url", [""])[0]
             t = urllib.parse.urlparse(target)
             if t.scheme != "https" or t.hostname != ALLOWED_HOST or not (t.path.startswith("/submissions/") or t.path.startswith("/user/")):
