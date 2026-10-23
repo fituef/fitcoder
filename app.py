@@ -152,9 +152,9 @@ function parse(html,U){
   [].slice.call(doc.querySelectorAll('.pagination a')).forEach(function(a){
     var h=a.getAttribute('href')||'',m=h.match(/[?&]page=(\d+)/);
     if(m){style='query';maxPage=Math.max(maxPage,+m[1]);return}
-    m=h.match(/\/(\d+)\/?$/);if(m)maxPage=Math.max(maxPage,+m[1]);
+    m=h.match(/\/user\/[^\/]+\/(\d+)\/?$/);if(m)maxPage=Math.max(maxPage,+m[1]);
   });
-  return {added:added,maxPage:maxPage,style:style};
+  return {added:added,maxPage:Math.min(maxPage,200),style:style};
 }
 function best(U){
   var m={},o=[];
@@ -244,7 +244,9 @@ $('go').onclick=async function(){
   for(var i=0;i<targets.length;i++){
     var t=targets[i],U=userOf(t.n),tag0='['+(i+1)+'/'+targets.length+'] '+t.n+': ';
     try{
-      var base=t.u.pathname.replace(/\/\d+\/?$/,'').replace(/\/$/,'');
+      var mb=t.u.pathname.match(/^(\/submissions\/user\/[^\/]+)(?:\/\d+)?\/?$/);
+      if(!mb)throw new Error('link phải có dạng https://oj.iuhcoder.com/submissions/user/<tên>/');
+      var base=mb[1];
       say(tag0+'đang lấy trang 1…');
       var first=parse(await getPage(t.u.origin+base+'/'),U);
       if(!first.added)throw new Error('không có dòng submit nào trong trang tải về');
